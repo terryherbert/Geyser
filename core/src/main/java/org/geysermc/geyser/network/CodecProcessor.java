@@ -239,7 +239,6 @@ class CodecProcessor {
             // Illegal unusued serverbound packets that relate to unused features
             .updateSerializer(PlayerAuthInputPacket.class, ILLEGAL_SERIALIZER)
             .updateSerializer(ClientCacheBlobStatusPacket.class, ILLEGAL_SERIALIZER)
-            .updateSerializer(SubClientLoginPacket.class, ILLEGAL_SERIALIZER)
             .updateSerializer(SubChunkRequestPacket.class, ILLEGAL_SERIALIZER)
             .updateSerializer(GameTestRequestPacket.class, ILLEGAL_SERIALIZER)
             // Ignored serverbound packets
