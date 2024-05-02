@@ -249,7 +249,9 @@ public class SkinManager {
 
             if (skinBytes.length <= (128 * 128 * 4) && !clientData.isPersonaSkin()) {
                 SkinProvider.storeBedrockSkin(playerEntity.uuid(), clientData.getSkinId(), skinBytes);
-                SkinProvider.storeBedrockGeometry(playerEntity.uuid(), geometryNameBytes, geometryBytes);
+                if (isGreaterThanZero(geometryNameBytes) && isGreaterThanZero(geometryBytes)) {
+                    SkinProvider.storeBedrockGeometry(playerEntity.uuid(), geometryNameBytes, geometryBytes);
+                }
             } else if (geyser.config().debugMode()) {
                 geyser.getLogger().info(GeyserLocale.getLocaleStringLog("geyser.skin.bedrock.fail", playerEntity.getUsername()));
                 geyser.getLogger().debug("The size of '" + playerEntity.getUsername() + "' skin is: " + clientData.getSkinImageWidth() + "x" + clientData.getSkinImageHeight());
@@ -261,6 +263,10 @@ public class SkinManager {
         } catch (Exception e) {
             throw new AssertionError("Failed to cache skin for bedrock user (" + playerEntity.getUsername() + "): ", e);
         }
+    }
+
+    private static boolean isGreaterThanZero(byte[] bytes) {
+        return bytes != null && bytes.length > 0;
     }
 
     public static UUID createOfflinePlayerUUID(String username) {
