@@ -30,21 +30,26 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Getter;
 import lombok.Setter;
+import lombok.ToString;
+
 import org.geysermc.floodgate.util.DeviceOs;
 import org.geysermc.floodgate.util.InputMode;
 import org.geysermc.floodgate.util.UiProfile;
 
 import java.util.UUID;
-
+@ToString
 @JsonIgnoreProperties(ignoreUnknown = true)
 @Getter
 public final class BedrockClientData {
+    @Setter
     @JsonProperty(value = "GameVersion")
     private String gameVersion;
     @JsonProperty(value = "ServerAddress")
+    @Setter
     private String serverAddress;
     @JsonProperty(value = "ThirdPartyName")
     private String username;
+    @Setter
     @JsonProperty(value = "LanguageCode")
     private String languageCode;
 
@@ -67,9 +72,9 @@ public final class BedrockClientData {
     @JsonProperty(value = "CapeOnClassicSkin")
     private boolean capeOnClassicSkin;
     @JsonProperty(value = "SkinResourcePatch")
-    private String geometryName;
+    private String geometryName = "";
     @JsonProperty(value = "SkinGeometryData")
-    private String geometryData;
+    private String geometryData = "";
     @JsonProperty(value = "PersonaSkin")
     private boolean personaSkin;
     @JsonProperty(value = "PremiumSkin")
@@ -77,6 +82,7 @@ public final class BedrockClientData {
 
     @JsonProperty(value = "DeviceId")
     private String deviceId;
+    @Setter
     @JsonProperty(value = "DeviceModel")
     private String deviceModel;
     @JsonProperty(value = "DeviceOS")

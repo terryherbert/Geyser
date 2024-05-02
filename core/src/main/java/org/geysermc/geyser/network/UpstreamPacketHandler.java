@@ -37,6 +37,7 @@ import org.cloudburstmc.protocol.bedrock.netty.codec.compression.CompressionStra
 import org.cloudburstmc.protocol.bedrock.netty.codec.compression.SimpleCompressionStrategy;
 import org.cloudburstmc.protocol.bedrock.netty.codec.compression.ZlibCompression;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ModalFormResponsePacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkSettingsPacket;
@@ -50,6 +51,7 @@ import org.cloudburstmc.protocol.bedrock.packet.ResourcePackDataInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackStackPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetTitlePacket;
+import org.cloudburstmc.protocol.bedrock.packet.SubClientLoginPacket;
 import org.cloudburstmc.protocol.common.PacketSignal;
 import org.cloudburstmc.protocol.common.util.Zlib;
 import org.geysermc.api.util.BedrockPlatform;
@@ -61,6 +63,7 @@ import org.geysermc.geyser.api.pack.PackCodec;
 import org.geysermc.geyser.api.pack.ResourcePack;
 import org.geysermc.geyser.api.pack.ResourcePackManifest;
 import org.geysermc.geyser.api.pack.option.ResourcePackOption;
+import org.geysermc.geyser.configuration.GeyserConfiguration.ISplitscreenConfiguration;
 import org.geysermc.geyser.event.type.SessionLoadResourcePacksEventImpl;
 import org.geysermc.geyser.pack.GeyserResourcePack;
 import org.geysermc.geyser.pack.ResourcePackHolder;
@@ -148,6 +151,13 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
 
         session.getUpstream().getSession().setCodec(packetCodec);
         return true;
+    }
+
+    @Override
+    public PacketSignal handle(DisconnectPacket packet)
+    {
+        this.session.disconnect(this.session.getUpstream().getSession().getDisconnectReason());   
+        return PacketSignal.HANDLED;
     }
 
     @Override
@@ -249,6 +259,59 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
         GeyserLocale.loadGeyserLocale(session.locale());
         return PacketSignal.HANDLED;
     }
+
+
+    @Override
+    public PacketSignal handle(SubClientLoginPacket loginPacket) {
+        if (geyser.isShuttingDown()) {
+            // Don't allow new players in if we're no longer operating
+            session.disconnect(GeyserLocale.getLocaleStringLog("geyser.core.shutdown.kick.message"));
+            return PacketSignal.HANDLED;
+        }
+
+        if (!geyser.getConfig().getSplitscreen().isEnabled())
+        {
+            session.disconnect(GeyserLocale.getLocaleStringLog("geyser.core.shutdown.kick.message"));
+            return PacketSignal.HANDLED;
+        }
+
+        // Get the mappings from the primary session, the protocol version is not provided in the SubClientLoginPacket
+        GeyserSession primaryGeyserSession = session.getPrimaryGeyserSession();
+        
+        session.setBlockMappings(primaryGeyserSession.getBlockMappings());
+        session.setItemMappings(primaryGeyserSession.getItemMappings());
+
+        LoginEncryptionUtils.encryptPlayerConnection(session, loginPacket);
+
+        if (session.isClosed()) {
+            // Can happen if Xbox validation fails
+            return PacketSignal.HANDLED;
+        }
+
+        PlayStatusPacket playStatus = new PlayStatusPacket();
+        playStatus.setStatus(PlayStatusPacket.Status.LOGIN_SUCCESS);
+        session.sendUpstreamPacket(playStatus);
+
+        geyser.getSessionManager().addPendingSession(session);
+
+        this.resourcePackLoadEvent = new SessionLoadResourcePacksEventImpl(session);
+        this.geyser.eventBus().fire(this.resourcePackLoadEvent);
+
+        ResourcePacksInfoPacket resourcePacksInfo = new ResourcePacksInfoPacket();
+        resourcePacksInfo.getResourcePackInfos().addAll(this.resourcePackLoadEvent.infoPacketEntries());
+        resourcePacksInfo.setVibrantVisualsForceDisabled(!session.isAllowVibrantVisuals());
+        
+        resourcePacksInfo.setForcedToAccept(GeyserImpl.getInstance().getConfig().isForceResourcePacks());
+        resourcePacksInfo.setWorldTemplateId(UUID.randomUUID());
+        resourcePacksInfo.setWorldTemplateVersion("*");
+        session.sendUpstreamPacket(resourcePacksInfo);
+
+        GeyserLocale.loadGeyserLocale(session.locale());
+
+        session.authenticate(session.getAuthData().name());
+        return PacketSignal.HANDLED;
+    }
+
 
     @Override
     public PacketSignal handle(ResourcePackClientResponsePacket packet) {
