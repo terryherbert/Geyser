@@ -41,6 +41,7 @@ import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkSettingsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestNetworkSettingsPacket;
+import org.cloudburstmc.protocol.bedrock.packet.SubClientLoginPacket;
 import org.cloudburstmc.protocol.common.PacketSignal;
 import org.cloudburstmc.protocol.common.util.Zlib;
 import org.geysermc.geyser.Constants;
@@ -51,6 +52,7 @@ import org.geysermc.geyser.registry.Registries;
 import org.geysermc.geyser.session.GeyserSession;
 import org.geysermc.geyser.text.GeyserLocale;
 import org.geysermc.geyser.util.LoginEncryptionUtils;
+import org.geysermc.geyser.util.LoginPacketHelper;
 import org.geysermc.geyser.util.VersionCheckUtils;
 
 import java.util.OptionalInt;
@@ -144,11 +146,23 @@ public class LoginPacketHandler extends LoggingPacketHandler {
         stage = Stage.LOGIN;
         return PacketSignal.HANDLED;
     }
+    @Override
+    public PacketSignal handle(SubClientLoginPacket loginPacket) {
+        return handle(LoginPacketHelper.createLoginPacket(loginPacket, session.getPrimaryGeyserSession()));
+    }
 
     @Override
     public PacketSignal handle(LoginPacket loginPacket) {
+        return  handle(LoginPacketHelper.createLoginPacket(loginPacket));
+    }
+
+    public PacketSignal handle(LoginPacketHelper.LoginPacketWrapper loginPacket) {
         if (geyser.isShuttingDown() || geyser.isReloading()) {
             // Don't allow new players in if we're no longer operating
+            session.disconnect(GeyserLocale.getLocaleStringLog("geyser.core.shutdown.kick.message"));
+            return PacketSignal.HANDLED;
+        }
+        if (loginPacket.subClientLogin() && !geyser.config().gameplay().enabledSplitScreenSupport()) {
             session.disconnect(GeyserLocale.getLocaleStringLog("geyser.core.shutdown.kick.message"));
             return PacketSignal.HANDLED;
         }
@@ -172,6 +186,10 @@ public class LoginPacketHandler extends LoggingPacketHandler {
 
         // The transport already bound the login to the client's key
         finishLogin();
+        if (loginPacket.subClientLogin())
+        {
+            session.authenticate(session.getAuthData().name());
+        }
         return PacketSignal.HANDLED;
     }
 

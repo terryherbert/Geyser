@@ -57,13 +57,15 @@ public final class BedrockClientData {
      * Shape of the codes Bedrock sends, such as en_US.
      */
     private static final Pattern LANGUAGE_CODE = Pattern.compile("[a-zA-Z]{2,3}_[a-zA-Z]{2,3}");
-
+    @Setter
     @SerializedName(value = "GameVersion")
     private String gameVersion;
     @SerializedName(value = "ServerAddress")
+    @Setter
     private String serverAddress;
     @SerializedName(value = "ThirdPartyName")
     private String username;
+    @Setter
     @SerializedName(value = "LanguageCode")
     private String languageCode;
 
@@ -102,6 +104,7 @@ public final class BedrockClientData {
 
     @SerializedName(value = "DeviceId")
     private String deviceId;
+    @Setter
     @SerializedName(value = "DeviceModel")
     private String deviceModel;
     @SerializedName(value = "DeviceOS")

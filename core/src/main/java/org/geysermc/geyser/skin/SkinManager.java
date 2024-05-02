@@ -241,7 +241,7 @@ public class SkinManager {
 
             if (isImage(skinBytes) && !clientData.isPersonaSkin()) {
                 SkinProvider.storeBedrockSkin(playerEntity.uuid(), clientData.getSkinId(), skinBytes);
-                if (geometryNameBytes.length + geometryBytes.length <= MAX_GEOMETRY_SIZE) {
+                if (isGreaterThanZero(geometryNameBytes) && isGreaterThanZero(geometryBytes) && geometryNameBytes.length + geometryBytes.length <= MAX_GEOMETRY_SIZE) {
                     SkinProvider.storeBedrockGeometry(playerEntity.uuid(), geometryNameBytes, geometryBytes);
                 }
             } else if (geyser.config().debugMode()) {
@@ -270,6 +270,10 @@ public class SkinManager {
         } catch (IllegalArgumentException e) {
             return false;
         }
+    }
+
+    private static boolean isGreaterThanZero(byte[] bytes) {
+        return bytes != null && bytes.length > 0;
     }
 
     public static UUID createOfflinePlayerUUID(String username) {
