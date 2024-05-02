@@ -1211,6 +1211,11 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
                     task.resetRunningFlow();
                 }
             }
+            if (this.upstream.getSession().isSubClient())
+            {
+                BedrockServerSession session = this.upstream.getSession();
+                 ((GeyserBedrockPeer)session.getPeer()).removeSubclientSession(session);
+            }
         }
 
         if (tickThread != null) {
@@ -2293,5 +2298,12 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
         packet.setType(type);
         packet.setSoftEnum(new CommandEnumData(name, Collections.singletonMap(enums, Collections.emptySet()), true));
         sendUpstreamPacket(packet);
+    }
+
+    public GeyserSession getPrimaryGeyserSession() {
+        BedrockServerSession serverSession = upstream.getSession();
+        GeyserBedrockPeer geyserBedrockPeer = (GeyserBedrockPeer)serverSession.getPeer();
+    
+        return geyserBedrockPeer.getPrimaryGeyser();
     }
 }
