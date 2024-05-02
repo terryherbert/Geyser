@@ -39,6 +39,8 @@ import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
 import lombok.Getter;
 import lombok.Setter;
+import lombok.ToString;
+
 import org.geysermc.floodgate.util.DeviceOs;
 import org.geysermc.floodgate.util.InputMode;
 import org.geysermc.floodgate.util.UiProfile;
@@ -48,15 +50,18 @@ import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.UUID;
-
+@ToString
 @Getter
 public final class BedrockClientData {
+    @Setter
     @SerializedName(value = "GameVersion")
     private String gameVersion;
     @SerializedName(value = "ServerAddress")
+    @Setter
     private String serverAddress;
     @SerializedName(value = "ThirdPartyName")
     private String username;
+    @Setter
     @SerializedName(value = "LanguageCode")
     private String languageCode;
 
@@ -93,6 +98,7 @@ public final class BedrockClientData {
 
     @SerializedName(value = "DeviceId")
     private String deviceId;
+    @Setter
     @SerializedName(value = "DeviceModel")
     private String deviceModel;
     @SerializedName(value = "DeviceOS")

@@ -45,6 +45,7 @@ import org.spongepowered.configurate.objectmapping.meta.Comment;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @ConfigSerializable
@@ -122,6 +123,9 @@ public interface GeyserConfig {
     default int configVersion() {
         return Constants.CONFIG_VERSION;
     }
+
+    @Comment("Configuration options for allowing split screen players to connect")
+    SplitscreenConfiguration splitScreen();
 
     @ConfigSerializable
     interface BedrockConfig extends BedrockListener {
@@ -471,5 +475,38 @@ public interface GeyserConfig {
 
         @Comment("Advanced networking options for Geyser's Bedrock listener")
         AdvancedBedrockConfig bedrock();
+    }
+
+    @ConfigSerializable
+    interface SplitscreenConfiguration {
+
+        @DefaultBoolean(false)
+        boolean isEnabled();
+
+        /**
+         * Will be removed after splitscreen XUID bug in consoles is fixed
+         * @return Whether to allow mapping of console profiles to Bedrock accounts
+         */
+        @Deprecated
+        @DefaultBoolean(false)
+        boolean isAllowMappingOfProfileUsers();
+
+        /**
+         * Will be removed after splitscreen XUID bug in consoles is fixed
+         */
+        @Deprecated
+        default Map<String, ? extends ISplitscreenUserInfo> users() { return Collections.emptyMap(); };
+    }
+
+    /**
+     * Will be removed after splitscreen XUID bug in consoles is fixed
+     */
+    @Deprecated
+    @ConfigSerializable
+    interface ISplitscreenUserInfo {
+
+        String getBedrockUsername();
+
+        String getXuid();
     }
 }
