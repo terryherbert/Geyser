@@ -159,6 +159,7 @@ import org.geysermc.geyser.level.gamerule.GameRuleHandler;
 import org.geysermc.geyser.level.physics.CollisionManager;
 import org.geysermc.geyser.network.GameProtocol;
 import org.geysermc.geyser.network.netty.LocalSession;
+import org.geysermc.geyser.network.GeyserBedrockPeer;
 import org.geysermc.geyser.registry.Registries;
 import org.geysermc.geyser.registry.type.BlockMappings;
 import org.geysermc.geyser.registry.type.ItemMappings;
@@ -1237,8 +1238,12 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
 
             // Remove from session manager
             geyser.getSessionManager().removeSession(this);
-            // Don't cancel any pending Microsoft auth here - the whole point of PendingMicrosoftAuthentication
-            // is to let mobile users disconnect to finish auth in the browser. Task cleans up on timeout.
+
+            if (this.upstream.getSession().isSubClient())
+            {
+                BedrockServerSession session = this.upstream.getSession();
+                 ((GeyserBedrockPeer)session.getPeer()).removeSubclientSession(session);
+            }
         }
 
         if (tickThread != null) {
@@ -1776,18 +1781,7 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
     public boolean sendForm(@NonNull Form form) {
         // First close any dialogs that are open. This won't execute the dialog's closing action.
         dialogManager.close();
-        return doSendForm(form);
-    }
-
-    /**
-     * Sends a form without first closing any open dialog. This should only be used by {@link org.geysermc.geyser.session.dialog.Dialog}s.
-     */
-    public void sendDialogForm(@NonNull Form form) {
-        doSendForm(form);
-    }
-
-    private boolean doSendForm(@NonNull Form form) {
-        // Close all currently open forms.
+        // Also close all currently open forms.
         if (formCache.hasFormOpen()) {
             closeForm();
         }
@@ -1809,6 +1803,18 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
             formCache.resendAllForms();
         }
 
+        return true;
+    }
+
+    /**
+     * Sends a form without first closing any open dialog. This should only be used by {@link org.geysermc.geyser.session.dialog.Dialog}s.
+     */
+    public void sendDialogForm(@NonNull Form form) {
+        doSendForm(form);
+    }
+
+    private boolean doSendForm(@NonNull Form form) {
+        formCache.showForm(form);
         return true;
     }
 
@@ -2627,6 +2633,13 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
         packet.setType(type);
         packet.setSoftEnum(new CommandEnumData(name, Collections.singletonMap(enums, Collections.emptySet()), true));
         sendUpstreamPacket(packet);
+    }
+
+    public GeyserSession getPrimaryGeyserSession() {
+        BedrockServerSession serverSession = upstream.getSession();
+        GeyserBedrockPeer geyserBedrockPeer = (GeyserBedrockPeer)serverSession.getPeer();
+
+        return geyserBedrockPeer.getPrimaryGeyser();
     }
 
     public void sendNetworkLatencyStackPacket(long timestamp, boolean ensureEventLoop, Runnable runnable) {
