@@ -31,9 +31,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import net.raphimc.minecraftauth.msa.model.MsaDeviceCode;
 import org.cloudburstmc.protocol.bedrock.data.auth.AuthPayload;
 import org.cloudburstmc.protocol.bedrock.data.auth.CertificateChainPayload;
+
 import org.cloudburstmc.protocol.bedrock.data.auth.TokenPayload;
 import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ServerToClientHandshakePacket;
+import org.cloudburstmc.protocol.bedrock.packet.SubClientLoginPacket;
 import org.cloudburstmc.protocol.bedrock.util.ChainValidationResult;
 import org.cloudburstmc.protocol.bedrock.util.ChainValidationResult.IdentityData;
 import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils;
@@ -43,6 +45,8 @@ import org.geysermc.cumulus.response.SimpleFormResponse;
 import org.geysermc.cumulus.response.result.FormResponseResult;
 import org.geysermc.cumulus.response.result.ValidFormResponseResult;
 import org.geysermc.geyser.GeyserImpl;
+import org.geysermc.geyser.api.network.AuthType;
+import org.geysermc.geyser.configuration.GeyserConfiguration.ISplitscreenUserInfo;
 import org.geysermc.geyser.session.GeyserSession;
 import org.geysermc.geyser.session.auth.AuthData;
 import org.geysermc.geyser.session.auth.BedrockClientData;
@@ -52,7 +56,9 @@ import org.geysermc.geyser.text.GeyserLocale;
 import javax.crypto.SecretKey;
 import java.security.KeyPair;
 import java.security.PublicKey;
+import java.util.List;
 import java.util.function.BiConsumer;
+
 
 public class LoginEncryptionUtils {
     private static final ObjectMapper JSON_MAPPER = new ObjectMapper().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
@@ -60,18 +66,23 @@ public class LoginEncryptionUtils {
     private static boolean HAS_SENT_ENCRYPTION_MESSAGE = false;
 
     public static void encryptPlayerConnection(GeyserSession session, LoginPacket loginPacket) {
-        encryptConnectionWithCert(session, loginPacket.getAuthPayload(), loginPacket.getClientJwt());
+        encryptConnectionWithCert(session, loginPacket.getAuthPayload(), loginPacket.getClientJwt(), true);
+    }
+    
+    public static void encryptPlayerConnection(GeyserSession session, SubClientLoginPacket loginPacket) {
+        encryptConnectionWithCert(session, loginPacket.getAuthPayload(), loginPacket.getClientJwt(),false);
     }
 
-    private static void encryptConnectionWithCert(GeyserSession session, AuthPayload authPayload, String jwt) {
+    private static void encryptConnectionWithCert(GeyserSession session, AuthPayload authPayload, String jwt, boolean normalLogin) {
         try {
             GeyserImpl geyser = session.getGeyser();
-
+            boolean allowMappingOfProfileUsers = geyser.getConfig().getSplitscreen().isAllowMappingOfProfileUsers();
+        
             ChainValidationResult result = EncryptionUtils.validatePayload(authPayload);
 
             geyser.getLogger().debug(String.format("Is player data signed? %s", result.signed()));
 
-            if (!result.signed() && !session.getGeyser().getConfig().isEnableProxyConnections()) {
+            if (normalLogin && !result.signed() && !session.getGeyser().getConfig().isEnableProxyConnections()) {
                 session.disconnect(GeyserLocale.getLocaleStringLog("geyser.network.remote.invalid_xbox_account"));
                 return;
             }
@@ -99,6 +110,78 @@ public class LoginEncryptionUtils {
 
             JsonNode clientDataJson = JSON_MAPPER.readTree(clientDataPayload);
             BedrockClientData data = JSON_MAPPER.convertValue(clientDataJson, BedrockClientData.class);
+
+
+            if (authPayload instanceof CertificateChainPayload certificateChainPayload) {
+                session.setCertChainData(certificateChainPayload.getChain());
+            } else {
+                GeyserImpl.getInstance().getLogger().warning("Received new auth payload!");
+                session.setCertChainData(List.of());
+            }
+
+            if (!normalLogin)
+            {
+                // The main session..
+                GeyserSession primaryGeyserSession = session.getPrimaryGeyserSession();
+                if (primaryGeyserSession == null) {
+                    geyser.getLogger().error("Subclient login received but primary session is null!");
+                    session.disconnect(GeyserLocale.getLocaleStringLog("geyser.auth.login.invalid.kick"));
+                    return;
+                }
+                AuthData authData = null;
+
+                String primaryXuid = primaryGeyserSession.getAuthData().xuid();
+                boolean hasXuid = extraData.xuid != null && extraData.xuid.length() !=0;
+                if (hasXuid)
+                {
+                    if (!primaryXuid.equals(extraData.xuid))
+                    {
+                        // Is different to primary session, use as normal.
+                        authData = new AuthData(extraData.displayName, extraData.identity, extraData.xuid, issuedAt);
+                    }
+
+                    if (!allowMappingOfProfileUsers)
+                    {
+                        // Same as primary, and allow mapping not enable, so invalid login.
+                        session.disconnect(GeyserLocale.getLocaleStringLog("geyser.auth.login.invalid.kick"));
+                        return;
+                    }
+                } if (!allowMappingOfProfileUsers)
+                {
+                    session.disconnect(GeyserLocale.getLocaleStringLog("geyser.auth.login.invalid.kick"));
+                    return;
+                }
+
+                // Either there is no Xuid or it is same as primary session, so look up if there is a mapping
+                if (authData == null)
+                {
+                    authData = getMappedAuthData(geyser, session, extraData, data, issuedAt);
+                    if (authData == null) {
+                        // Invalid login, no mapping found
+                        return;
+                    }
+                }
+                
+                session.setAuthData(authData);
+
+                // Client data for subclient login appears to be missing some information which is required for login.
+                data.setLanguageCode(primaryGeyserSession.getClientData().getLanguageCode());
+                data.setGameVersion(session.getPrimaryGeyserSession().getClientData().getGameVersion());
+                data.setServerAddress(session.getPrimaryGeyserSession().getClientData().getServerAddress());
+                data.setDeviceModel(session.getPrimaryGeyserSession().getClientData().getDeviceModel());
+
+                String enrichedClientData = JSON_MAPPER.writer().withDefaultPrettyPrinter().writeValueAsString(data);
+
+                data.setOriginalString(enrichedClientData);
+                session.setClientData(data);
+
+                // Do proceed to startEncryptionHandshake, this is not done with a subclient login.
+                return;
+            }
+
+            // TODO!!! identity won't persist
+            session.setAuthData(new AuthData(extraData.displayName, extraData.identity, extraData.xuid, issuedAt));
+
             data.setOriginalString(jwt);
             session.setClientData(data);
 
@@ -116,6 +199,28 @@ public class LoginEncryptionUtils {
             session.disconnect("disconnectionScreen.internalError.cantConnect");
             throw new RuntimeException("Unable to complete login", ex);
         }
+    }
+
+    private static AuthData getMappedAuthData(GeyserImpl geyser, GeyserSession session, IdentityData extraData,
+            BedrockClientData data, long issuedAt) {
+        ISplitscreenUserInfo userConfig = geyser.getConfig().getSplitscreen().getUsers().get(data.getUsername());
+
+        if (userConfig == null) {
+            if (geyser.getConfig().getRemote().authType() == AuthType.FLOODGATE) {
+                geyser.getLogger().info(
+                        """
+                                Add the following user to the Geyser splitscreen config to allow them to play via splitscreen:
+
+                                    Profile Username (Change this):
+                                    bedrock-username: %s
+                                    xuid: %s
+                                """
+                                .formatted(data.getUsername(), extraData.xuid));
+            }
+            session.disconnect(GeyserLocale.getLocaleStringLog("geyser.auth.login.invalid.kick"));
+            return null;
+        }
+        return new AuthData(userConfig.getBedrockUsername(), extraData.identity, userConfig.getXuid(), issuedAt);
     }
 
     private static void startEncryptionHandshake(GeyserSession session, PublicKey key) throws Exception {
