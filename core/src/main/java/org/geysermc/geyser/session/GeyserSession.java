@@ -149,6 +149,7 @@ import org.geysermc.geyser.level.BedrockDimension;
 import org.geysermc.geyser.level.JavaDimension;
 import org.geysermc.geyser.level.physics.CollisionManager;
 import org.geysermc.geyser.network.GameProtocol;
+import org.geysermc.geyser.network.GeyserBedrockPeer;
 import org.geysermc.geyser.network.netty.LocalSession;
 import org.geysermc.geyser.registry.Registries;
 import org.geysermc.geyser.registry.type.BlockMappings;
@@ -1226,6 +1227,11 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
                     task.resetRunningFlow();
                 }
             }
+            if (this.upstream.getSession().isSubClient())
+            {
+                BedrockServerSession session = this.upstream.getSession();
+                 ((GeyserBedrockPeer)session.getPeer()).removeSubclientSession(session);
+            }
         }
 
         if (tickThread != null) {
@@ -2272,5 +2278,12 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
         packet.setType(type);
         packet.setSoftEnum(new CommandEnumData(name, Collections.singletonMap(enums, Collections.emptySet()), true));
         sendUpstreamPacket(packet);
+    }
+
+    public GeyserSession getPrimaryGeyserSession() {
+        BedrockServerSession serverSession = upstream.getSession();
+        GeyserBedrockPeer geyserBedrockPeer = (GeyserBedrockPeer)serverSession.getPeer();
+    
+        return geyserBedrockPeer.getPrimaryGeyser();
     }
 }
