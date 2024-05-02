@@ -96,8 +96,9 @@ class LoginIdentityBindingTest {
              var codec = mockStatic(CodecProcessor.class)) {
             encryption.when(() -> EncryptionUtils.validatePayload(payload)).thenReturn(result);
             locale.when(() -> GeyserLocale.getLocaleStringLog(anyString())).thenReturn("invalid account");
-            if (validSignature) LoginEncryptionUtils.encryptPlayerConnection(session, packet);
-            else assertThrows(RuntimeException.class, () -> LoginEncryptionUtils.encryptPlayerConnection(session, packet));
+            final var wrapedPacket = LoginPacketHelper.createLoginPacket(packet);
+            if (validSignature) LoginEncryptionUtils.encryptPlayerConnection(session, wrapedPacket);
+            else assertThrows(RuntimeException.class, () -> LoginEncryptionUtils.encryptPlayerConnection(session, wrapedPacket));
             boolean accepted = validSignature && (forwarded ? validForwardedFields : matching);
             if (accepted) {
                 verify(session).setAuthData(any(AuthData.class));
