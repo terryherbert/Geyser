@@ -52,12 +52,15 @@ import java.util.UUID;
 
 @Getter
 public final class BedrockClientData {
+    @Setter
     @SerializedName(value = "GameVersion")
     private String gameVersion;
     @SerializedName(value = "ServerAddress")
+    @Setter
     private String serverAddress;
     @SerializedName(value = "ThirdPartyName")
     private String username;
+    @Setter
     @SerializedName(value = "LanguageCode")
     private String languageCode;
 
@@ -96,6 +99,7 @@ public final class BedrockClientData {
 
     @SerializedName(value = "DeviceId")
     private String deviceId;
+    @Setter
     @SerializedName(value = "DeviceModel")
     private String deviceModel;
     @SerializedName(value = "DeviceOS")

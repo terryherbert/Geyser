@@ -125,6 +125,9 @@ public interface GeyserConfig {
         return Constants.CONFIG_VERSION;
     }
 
+    @Comment("Configuration options for allowing split screen players to connect")
+    SplitscreenConfig splitScreen();
+
     @ConfigSerializable
     interface SignalingConfig {
         @Comment("""
@@ -512,6 +515,12 @@ public interface GeyserConfig {
         @Comment("The radius in blocks around the player in which custom skulls are displayed.")
         @DefaultNumeric(32)
         int customSkullRenderDistance();
+
+        @Comment("""
+            Whether to allow split screen support.
+            This currently is a experimental feature""")
+        @DefaultBoolean(false)
+        boolean enabledSplitScreenSupport();
     }
 
     @ConfigSerializable
@@ -709,5 +718,34 @@ public interface GeyserConfig {
 
         @Comment("Advanced options for the external signaling service. Only used in the \"nxs\" and \"hybrid\" signaling modes.")
         AdvancedNxsConfig nxs();
+    }
+
+    @ConfigSerializable
+    interface SplitscreenConfig {
+        /**
+         * Will be removed after splitscreen XUID bug in consoles is fixed
+         * @return Whether to allow mapping of console profiles to Bedrock accounts
+         */
+        @Deprecated
+        @DefaultBoolean(false)
+        boolean allowMappingOfProfileUsers();
+
+        /**
+         * Will be removed after splitscreen XUID bug in consoles is fixed
+         */
+        @Deprecated
+        default Map<String, SplitscreenUserInfo> users() { return Collections.emptyMap(); };
+    }
+
+    /**
+     * Will be removed after splitscreen XUID bug in consoles is fixed
+     */
+    @Deprecated
+    @ConfigSerializable
+    interface SplitscreenUserInfo {
+
+        String bedrockUsername();
+
+        String xuid();
     }
 }
