@@ -36,6 +36,7 @@ import org.cloudburstmc.protocol.bedrock.netty.codec.compression.CompressionStra
 import org.cloudburstmc.protocol.bedrock.netty.codec.compression.SimpleCompressionStrategy;
 import org.cloudburstmc.protocol.bedrock.netty.codec.compression.ZlibCompression;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ModalFormResponsePacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkSettingsPacket;
@@ -49,6 +50,7 @@ import org.cloudburstmc.protocol.bedrock.packet.ResourcePackDataInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackStackPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetTitlePacket;
+import org.cloudburstmc.protocol.bedrock.packet.SubClientLoginPacket;
 import org.cloudburstmc.protocol.common.PacketSignal;
 import org.cloudburstmc.protocol.common.util.Zlib;
 import org.geysermc.api.util.BedrockPlatform;
@@ -64,13 +66,13 @@ import org.geysermc.geyser.event.type.SessionLoadResourcePacksEventImpl;
 import org.geysermc.geyser.pack.GeyserResourcePack;
 import org.geysermc.geyser.pack.ResourcePackHolder;
 import org.geysermc.geyser.pack.url.GeyserUrlPackCodec;
-import org.geysermc.geyser.registry.BlockRegistries;
 import org.geysermc.geyser.registry.Registries;
 import org.geysermc.geyser.registry.loader.ResourcePackLoader;
 import org.geysermc.geyser.session.GeyserSession;
 import org.geysermc.geyser.session.PendingMicrosoftAuthentication;
 import org.geysermc.geyser.text.GeyserLocale;
 import org.geysermc.geyser.util.LoginEncryptionUtils;
+import org.geysermc.geyser.util.LoginPacketHelper;
 import org.geysermc.geyser.util.MathUtils;
 import org.geysermc.geyser.util.VersionCheckUtils;
 
@@ -150,6 +152,13 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
     }
 
     @Override
+    public PacketSignal handle(DisconnectPacket packet)
+    {
+        this.session.disconnect(this.session.getUpstream().getSession().getDisconnectReason().toString());   
+        return PacketSignal.HANDLED;
+    }
+
+    @Override
     public void onDisconnect(CharSequence reason) {
         // Use our own disconnect messages for these reasons
         if (BedrockDisconnectReasons.CLOSED.contentEquals(reason)) {
@@ -180,16 +189,33 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
     }
 
     @Override
+    public PacketSignal handle(SubClientLoginPacket loginPacket) {
+        return handle(LoginPacketHelper.createLoginPacket(loginPacket, session.getPrimaryGeyserSession()));
+    }
+
+    @Override
     public PacketSignal handle(LoginPacket loginPacket) {
+        return  handle(LoginPacketHelper.createLoginPacket(loginPacket));
+    }
+    public PacketSignal handle(LoginPacketHelper.LoginPacketWrapper loginPacket) {
         if (geyser.isShuttingDown() || geyser.isReloading()) {
             // Don't allow new players in if we're no longer operating
             session.disconnect(GeyserLocale.getLocaleStringLog("geyser.core.shutdown.kick.message"));
             return PacketSignal.HANDLED;
         }
 
-        if (!networkSettingsRequested) {
-            session.disconnect(GeyserLocale.getLocaleStringLog("geyser.network.outdated.client", GameProtocol.getAllSupportedBedrockVersions()));
-            return PacketSignal.HANDLED;
+        if (loginPacket.subClientLogin())
+        {
+            if (!geyser.config().gameplay().enabledSplitScreenSupport()) {
+                session.disconnect(GeyserLocale.getLocaleStringLog("geyser.core.shutdown.kick.message"));
+                return PacketSignal.HANDLED;
+            }
+        }
+        else {
+            if (!networkSettingsRequested) {
+                session.disconnect(GeyserLocale.getLocaleStringLog("geyser.network.outdated.client", GameProtocol.getAllSupportedBedrockVersions()));
+                return PacketSignal.HANDLED;
+            }
         }
 
         if (receivedLoginPacket) {
@@ -205,8 +231,8 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
         }
 
         // Set the block translation based off of version
-        session.setBlockMappings(BlockRegistries.BLOCKS.forVersion(loginPacket.getProtocolVersion()));
-        session.setItemMappings(Registries.ITEMS.forVersion(loginPacket.getProtocolVersion()));
+        session.setBlockMappings(loginPacket.getBlockMappings());
+        session.setItemMappings(loginPacket.getItemMappings());
 
         LoginEncryptionUtils.encryptPlayerConnection(session, loginPacket);
 
@@ -249,6 +275,11 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
         session.sendUpstreamPacket(resourcePacksInfo);
 
         GeyserLocale.loadGeyserLocale(session.locale());
+
+        if (loginPacket.subClientLogin())
+        {
+            session.authenticate(session.getAuthData().name());
+        }
         return PacketSignal.HANDLED;
     }
 
