@@ -87,6 +87,7 @@ public class LoginEncryptionUtils {
 
             IdentityData extraData = result.identityClaims().extraData;
             session.setAuthData(new AuthData(extraData.displayName, extraData.identity, extraData.xuid, issuedAt));
+
             if (authPayload instanceof TokenPayload tokenPayload) {
                 session.setToken(tokenPayload.getToken());
             } else if (authPayload instanceof CertificateChainPayload certificateChainPayload) {
@@ -103,13 +104,6 @@ public class LoginEncryptionUtils {
             }
 
             BedrockClientData data = JsonUtils.fromJson(clientDataPayload, BedrockClientData.class);
-
-            if (authPayload instanceof CertificateChainPayload certificateChainPayload) {
-                session.setCertChainData(certificateChainPayload.getChain());
-            } else {
-                GeyserImpl.getInstance().getLogger().warning("Received new auth payload!");
-                session.setCertChainData(List.of());
-            }
 
             if (!normalLogin)
             {
