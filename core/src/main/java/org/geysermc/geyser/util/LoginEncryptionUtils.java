@@ -71,7 +71,6 @@ public class LoginEncryptionUtils {
     private static void encryptConnectionWithCert(GeyserSession session, AuthPayload authPayload, String jwt, boolean normalLogin) {
         try {
             GeyserImpl geyser = session.getGeyser();
-            boolean allowMappingOfProfileUsers = geyser.config().splitScreen().isAllowMappingOfProfileUsers();
         
             ChainValidationResult result = EncryptionUtils.validatePayload(authPayload);
 
@@ -105,7 +104,6 @@ public class LoginEncryptionUtils {
 
             BedrockClientData data = JsonUtils.fromJson(clientDataPayload, BedrockClientData.class);
 
-
             if (authPayload instanceof CertificateChainPayload certificateChainPayload) {
                 session.setCertChainData(certificateChainPayload.getChain());
             } else {
@@ -115,61 +113,8 @@ public class LoginEncryptionUtils {
 
             if (!normalLogin)
             {
-                // The main session..
-                GeyserSession primaryGeyserSession = session.getPrimaryGeyserSession();
-                if (primaryGeyserSession == null) {
-                    geyser.getLogger().error("Subclient login received but primary session is null!");
-                    session.disconnect(GeyserLocale.getLocaleStringLog("geyser.auth.login.invalid.kick"));
-                    return;
-                }
-                AuthData authData = null;
-
-                String primaryXuid = primaryGeyserSession.getAuthData().xuid();
-                boolean hasXuid = extraData.xuid != null && extraData.xuid.length() !=0;
-                if (hasXuid)
-                {
-                    if (!primaryXuid.equals(extraData.xuid))
-                    {
-                        // Is different to primary session, use as normal.
-                        authData = new AuthData(extraData.displayName, extraData.identity, extraData.xuid, issuedAt);
-                    }
-
-                    if (!allowMappingOfProfileUsers)
-                    {
-                        // Same as primary, and allow mapping not enable, so invalid login.
-                        session.disconnect(GeyserLocale.getLocaleStringLog("geyser.auth.login.invalid.kick"));
-                        return;
-                    }
-                } if (!allowMappingOfProfileUsers)
-                {
-                    session.disconnect(GeyserLocale.getLocaleStringLog("geyser.auth.login.invalid.kick"));
-                    return;
-                }
-
-                // Either there is no Xuid or it is same as primary session, so look up if there is a mapping
-                if (authData == null)
-                {
-                    authData = getMappedAuthData(geyser, session, extraData, data, issuedAt);
-                    if (authData == null) {
-                        // Invalid login, no mapping found
-                        return;
-                    }
-                }
-                
-                session.setAuthData(authData);
-
-                // Client data for subclient login appears to be missing some information which is required for login.
-                data.setLanguageCode(primaryGeyserSession.getClientData().getLanguageCode());
-                data.setGameVersion(session.getPrimaryGeyserSession().getClientData().getGameVersion());
-                data.setServerAddress(session.getPrimaryGeyserSession().getClientData().getServerAddress());
-                data.setDeviceModel(session.getPrimaryGeyserSession().getClientData().getDeviceModel());
-
-                String enrichedClientData = data.toString();
-
-                data.setOriginalString(enrichedClientData);
-                session.setClientData(data);
-
-                // Do proceed to startEncryptionHandshake, this is not done with a subclient login.
+                processSubClientAuth(session, geyser, extraData, issuedAt, data);
+                // Do not proceed to startEncryptionHandshake, this is not done with a subclient login.
                 return;
             }
 
@@ -193,6 +138,54 @@ public class LoginEncryptionUtils {
             session.disconnect("disconnectionScreen.internalError.cantConnect");
             throw new RuntimeException("Unable to complete login", ex);
         }
+    }
+
+    private static void processSubClientAuth(GeyserSession session, GeyserImpl geyser, IdentityData extraData, long issuedAt, BedrockClientData data) {
+        boolean allowMappingOfProfileUsers = geyser.config().splitScreen().isAllowMappingOfProfileUsers();
+        // The main session..
+        GeyserSession primaryGeyserSession = session.getPrimaryGeyserSession();
+        if (primaryGeyserSession == null) {
+            geyser.getLogger().error("Subclient login received but primary session is null!");
+            session.disconnect(GeyserLocale.getLocaleStringLog("geyser.auth.login.invalid.kick"));
+            return;
+        }
+
+        AuthData authData = null;
+
+        final String primaryXuid = primaryGeyserSession.getAuthData().xuid();
+        final boolean hasXuid = extraData.xuid != null && extraData.xuid.length() !=0;
+
+        if (hasXuid && !primaryXuid.equals(extraData.xuid))
+        {
+                // Is different to primary session, use as normal.
+                authData = new AuthData(extraData.displayName, extraData.identity, extraData.xuid, issuedAt);
+        }
+
+        if (authData == null & allowMappingOfProfileUsers)
+        {
+            // try and map session as eith not Xuid or same as primary
+            authData = getMappedAuthData(geyser, session, extraData, data, issuedAt);
+        }
+
+        // Either there is no Xuid or it is same as primary session, and if allowed lookup failed, so kick session
+        if (authData == null)
+        {
+            session.disconnect(GeyserLocale.getLocaleStringLog("geyser.auth.login.invalid.kick"));
+            return;
+        }
+
+        session.setAuthData(authData);
+
+        // Client data for subclient login appears to be missing some information which is required for login.
+        data.setLanguageCode(primaryGeyserSession.getClientData().getLanguageCode());
+        data.setGameVersion(primaryGeyserSession.getClientData().getGameVersion());
+        data.setServerAddress(primaryGeyserSession.getClientData().getServerAddress());
+        data.setDeviceModel(primaryGeyserSession.getClientData().getDeviceModel());
+
+        String enrichedClientData = JsonUtils.createGson().toJson(data.toString());
+
+        data.setOriginalString(enrichedClientData);
+        session.setClientData(data);
     }
 
     private static AuthData getMappedAuthData(GeyserImpl geyser, GeyserSession session, IdentityData extraData,

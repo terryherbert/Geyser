@@ -289,27 +289,35 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
             // Can happen if Xbox validation fails
             return PacketSignal.HANDLED;
         }
+        geyser.getSessionManager().addPendingSession(session);
 
+        // Fire SessionInitializeEvent here as we now know the client data
+        geyser.eventBus().fire(new SessionInitializeEvent(session));
+        
         PlayStatusPacket playStatus = new PlayStatusPacket();
         playStatus.setStatus(PlayStatusPacket.Status.LOGIN_SUCCESS);
         session.sendUpstreamPacket(playStatus);
 
-        geyser.getSessionManager().addPendingSession(session);
-
         this.resourcePackLoadEvent = new SessionLoadResourcePacksEventImpl(session);
-        this.geyser.eventBus().fire(this.resourcePackLoadEvent);
+        this.geyser.eventBus().fireEventElseKick(this.resourcePackLoadEvent, session);
+        if (session.isClosed()) {
+            // Can happen if an error occurs in the resource pack event; that'll disconnect the player
+            return PacketSignal.HANDLED;
+        }
+        session.integratedPackActive(resourcePackLoadEvent.isIntegratedPackActive());
 
         ResourcePacksInfoPacket resourcePacksInfo = new ResourcePacksInfoPacket();
         resourcePacksInfo.getResourcePackInfos().addAll(this.resourcePackLoadEvent.infoPacketEntries());
         resourcePacksInfo.setVibrantVisualsForceDisabled(!session.isAllowVibrantVisuals());
         
-        resourcePacksInfo.setForcedToAccept(GeyserImpl.getInstance().config().gameplay().forceResourcePacks());
+        resourcePacksInfo.setForcedToAccept(GeyserImpl.getInstance().config().gameplay().forceResourcePacks()||
+            resourcePackLoadEvent.isIntegratedPackActive());
         resourcePacksInfo.setWorldTemplateId(UUID.randomUUID());
         resourcePacksInfo.setWorldTemplateVersion("*");
+
         session.sendUpstreamPacket(resourcePacksInfo);
 
         GeyserLocale.loadGeyserLocale(session.locale());
-
         session.authenticate(session.getAuthData().name());
         return PacketSignal.HANDLED;
     }
