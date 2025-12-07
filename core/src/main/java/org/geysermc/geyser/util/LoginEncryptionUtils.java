@@ -85,9 +85,6 @@ public class LoginEncryptionUtils {
             Long rawIssuedAt = (Long) result.rawIdentityClaims().get("iat");
             long issuedAt = rawIssuedAt != null ? rawIssuedAt : -1;
 
-            IdentityData extraData = result.identityClaims().extraData;
-            session.setAuthData(new AuthData(extraData.displayName, extraData.identity, extraData.xuid, issuedAt));
-
             if (authPayload instanceof TokenPayload tokenPayload) {
                 session.setToken(tokenPayload.getToken());
             } else if (authPayload instanceof CertificateChainPayload certificateChainPayload) {
@@ -97,13 +94,13 @@ public class LoginEncryptionUtils {
             }
 
             PublicKey identityPublicKey = result.identityClaims().parsedIdentityPublicKey();
-
             byte[] clientDataPayload = EncryptionUtils.verifyClientData(jwt, identityPublicKey);
             if (clientDataPayload == null) {
                 throw new IllegalStateException("Client data isn't signed by the given chain data");
             }
 
-            BedrockClientData data = JsonUtils.fromJson(clientDataPayload, BedrockClientData.class);
+            final IdentityData extraData = result.identityClaims().extraData;
+            final BedrockClientData data = JsonUtils.fromJson(clientDataPayload, BedrockClientData.class);
 
             if (!normalLogin)
             {
@@ -112,7 +109,6 @@ public class LoginEncryptionUtils {
                 return;
             }
 
-            // TODO!!! identity won't persist
             session.setAuthData(new AuthData(extraData.displayName, extraData.identity, extraData.xuid, issuedAt));
 
             data.setOriginalString(jwt);
