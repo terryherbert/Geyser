@@ -1385,7 +1385,7 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
     public void setClientData(BedrockClientData data) {
         this.clientData = data;
         this.inputCache.setInputMode(org.cloudburstmc.protocol.bedrock.data.InputMode.values()[data.getCurrentInputMode().ordinal()]);
-        if (geyser.config().gameplay().enableSplitScreenSupport())
+        if (geyser.config().gameplay().enabledSplitScreenSupport())
         {
             this.subClientDataCache = new SubClientDataCache(data);
         }
