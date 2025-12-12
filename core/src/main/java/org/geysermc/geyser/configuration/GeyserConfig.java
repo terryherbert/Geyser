@@ -125,7 +125,7 @@ public interface GeyserConfig {
     }
 
     @Comment("Configuration options for allowing split screen players to connect")
-    SplitscreenConfiguration splitScreen();
+    SplitscreenConfig splitScreen();
 
     @ConfigSerializable
     interface BedrockConfig extends BedrockListener {
@@ -348,6 +348,12 @@ public interface GeyserConfig {
         @Comment("The radius in blocks around the player in which custom skulls are displayed.")
         @DefaultNumeric(32)
         int customSkullRenderDistance();
+
+        @Comment("""
+            Whether to allow split screen support.
+            This currently is a experimental feature""")
+        @DefaultBoolean(false)
+        boolean enabledSplitScreenSupport();
     }
 
     @ConfigSerializable
@@ -478,11 +484,7 @@ public interface GeyserConfig {
     }
 
     @ConfigSerializable
-    interface SplitscreenConfiguration {
-
-        @DefaultBoolean(false)
-        boolean isEnabled();
-
+    interface SplitscreenConfig {
         /**
          * Will be removed after splitscreen XUID bug in consoles is fixed
          * @return Whether to allow mapping of console profiles to Bedrock accounts

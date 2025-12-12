@@ -157,7 +157,7 @@ public final class FloodgateSkinUploader {
                         // error means that the uploader did something wrong
                         if (node.has("error")) {
                             String error = node.get("error").getAsString();
-                            logger.info("Got disconnected from the skin uploader: " + error + ", node: "+ node.getAsString() + " reason: "+reason + " remote: " + remote);
+                            logger.info("Got disconnected from the skin uploader: " + error);
                         }
                     } catch (JsonSyntaxException ignored) {
                         // ignore invalid json

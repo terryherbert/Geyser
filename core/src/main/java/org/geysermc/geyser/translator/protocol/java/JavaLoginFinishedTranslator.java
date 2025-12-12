@@ -60,23 +60,19 @@ public class JavaLoginFinishedTranslator extends PacketTranslator<ClientboundLog
         if (remoteAuthType == AuthType.OFFLINE || playerEntity.getUuid().getMostSignificantBits() == 0) {
             SkinManager.handleBedrockSkin(playerEntity, session.getClientData());
         }
-        else{
-            System.out.println("NOT handleBedrockSkin " + playerEntity.getUsername());
-        }
 
         if (remoteAuthType == AuthType.FLOODGATE) {
             // We'll send the skin upload a bit after the handshake packet (aka this packet),
             // because otherwise the global server returns the data too fast.
             // We upload it after we know for sure that the target server
             // is ready to handle the result of the global server.
-            System.out.println("AuthType.FLOODGATE: " + playerEntity.getUsername());
             session.getGeyser().getSkinUploader().uploadSkin(session);
         }
 
         // We no longer need these variables; they're just taking up space in memory now
-       // session.setCertChainData(null);
+        session.setCertChainData(null);
         session.setToken(null);
-        //session.getClientData().setOriginalString(null);
+        session.getClientData().setOriginalString(null);
 
         // Reset code of conduct accepted state, mirrors Java Edition
         session.hasAcceptedCodeOfConduct(false);

@@ -166,13 +166,10 @@ public class LoginEncryptionUtils {
 
         session.setAuthData(authData);
 
-        // Client data for subclient login appears to be missing some information which is required for login.
-        data.setLanguageCode(primaryGeyserSession.getClientData().getLanguageCode());
-        data.setGameVersion(primaryGeyserSession.getClientData().getGameVersion());
-        data.setServerAddress(primaryGeyserSession.getClientData().getServerAddress());
-        data.setDeviceModel(primaryGeyserSession.getClientData().getDeviceModel());
+        // Apply client data needed for login from primary client data
+        primaryGeyserSession.getSubClientDataCache().apply(data);
 
-        String enrichedClientData = JsonUtils.createGson().toJson(data.toString());
+        String enrichedClientData = JsonUtils.createGson().toJson(data);
 
         data.setOriginalString(enrichedClientData);
         session.setClientData(data);

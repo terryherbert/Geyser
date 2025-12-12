@@ -271,7 +271,7 @@ public class UpstreamPacketHandler extends LoggingPacketHandler {
             return PacketSignal.HANDLED;
         }
 
-        if (!geyser.config().splitScreen().isEnabled())
+        if (!geyser.config().gameplay().enableSplitScreenSupport())
         {
             session.disconnect(GeyserLocale.getLocaleStringLog("geyser.core.shutdown.kick.message"));
             return PacketSignal.HANDLED;

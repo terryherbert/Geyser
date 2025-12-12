@@ -177,6 +177,7 @@ import org.geysermc.geyser.session.cache.PreferencesCache;
 import org.geysermc.geyser.session.cache.RegistryCache;
 import org.geysermc.geyser.session.cache.SkullCache;
 import org.geysermc.geyser.session.cache.StructureBlockCache;
+import org.geysermc.geyser.session.cache.SubClientDataCache;
 import org.geysermc.geyser.session.cache.TagCache;
 import org.geysermc.geyser.session.cache.TeleportCache;
 import org.geysermc.geyser.session.cache.WorldBorder;
@@ -266,6 +267,7 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
     @Setter
     private AuthData authData;
     private BedrockClientData clientData;
+    private SubClientDataCache subClientDataCache;
     /**
      * Used for Floodgate skin uploading
      */
@@ -1375,9 +1377,18 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
         this.cameraData.handleGameModeChange(currentlySpectator, newGamemode);
     }
 
+    @Override
+    public void sendMessage(Component message) {
+        GeyserCommandSource.super.sendMessage(message);
+    }
+
     public void setClientData(BedrockClientData data) {
         this.clientData = data;
         this.inputCache.setInputMode(org.cloudburstmc.protocol.bedrock.data.InputMode.values()[data.getCurrentInputMode().ordinal()]);
+        if (geyser.config().gameplay().enableSplitScreenSupport())
+        {
+            this.subClientDataCache = new SubClientDataCache(data);
+        }
     }
 
     /**
