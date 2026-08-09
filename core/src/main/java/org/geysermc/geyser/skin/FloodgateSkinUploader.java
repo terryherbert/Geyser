@@ -70,7 +70,7 @@ public final class FloodgateSkinUploader {
 
     @Getter private int id;
     @Getter private String verifyCode;
-    /**
+    /*
      * Should Geyser forward the ID & verification code to Floodgate so that they can subscribe to skin data too?
      * Before this was introduced it always forwarded, but there was no real benefit to it compared to letting Geyser send it to the server.
      * So this now defaults to false unless there's an active connection, with the Global API having an option to turn it off.
