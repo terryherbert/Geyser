@@ -42,6 +42,9 @@ import org.geysermc.cumulus.response.result.FormResponseResult;
 import org.geysermc.cumulus.response.result.ValidFormResponseResult;
 import org.geysermc.geyser.GeyserImpl;
 import org.geysermc.geyser.network.bedrock.CodecProcessor;
+import io.netty.channel.Channel;
+import org.cloudburstmc.netty.channel.nethernet.AddressSource;
+import org.cloudburstmc.netty.channel.nethernet.NetherNetChannel;
 import org.cloudburstmc.netty.util.nethernet.TransportIdentityBinding;
 import org.geysermc.geyser.network.bedrock.nethernet.NetherNetPeer;
 import org.geysermc.geyser.session.GeyserSession;
@@ -111,8 +114,15 @@ public class LoginEncryptionUtils {
             // Every other transport binds the chain through the encryption handshake below instead.
             if (!geyser.config().advanced().bedrock().useWaterdogpeForwarding()
                     && session.getUpstream().getSession().getPeer() instanceof NetherNetPeer) {
-                if (refusedByBinding(geyser, session, TransportIdentityBinding.mismatch(
-                        session.getUpstream().getSession().getPeer().getChannel(), identityPublicKey))) {
+                Channel channel = session.getUpstream().getSession().getPeer().getChannel();
+                String refusal = TransportIdentityBinding.mismatch(channel, identityPublicKey);
+                if (refusal != null && lanLoginTrusted(channel)) {
+                    // Signed by Mojang (checked above), as every login was taken before NetherNet
+                    geyser.getLogger().debug("Taking a LAN login from " + session.getSocketAddress()
+                            + " on its signed login chain, as its offer carried no identity to bind the transport to");
+                    refusal = null;
+                }
+                if (refusedByBinding(geyser, session, refusal)) {
                     return false;
                 }
             }
@@ -180,6 +190,23 @@ public class LoginEncryptionUtils {
         SecretKey encryptionKey = EncryptionUtils.getSecretKey(serverKeyPair.getPrivate(), key, token);
         session.getUpstream().getSession().enableEncryption(encryptionKey);
         return true;
+    }
+
+    /**
+     * Whether a login that came in over LAN discovery is taken on its Mojang-signed login chain alone. Clients joining a
+     * LAN game send no identity with their offer, so there is nothing to bind the transport to, and the chain is what
+     * RakNet logins were checked by. Only when nothing was bound: a binding that is there is always checked.
+     * {@code -DgeyserLanTrustLoginChain=false} turns it off, refusing such logins.
+     */
+    private static boolean lanLoginTrusted(Channel channel) {
+        if (!Boolean.parseBoolean(System.getProperty("geyserLanTrustLoginChain", "true"))) {
+            return false;
+        }
+        if (TransportIdentityBinding.state(channel) != TransportIdentityBinding.State.NONE) {
+            return false;
+        }
+        return channel instanceof NetherNetChannel netherNet
+                && netherNet.signaledAddress().source() == AddressSource.SIGNALING_LAN;
     }
 
     /**
