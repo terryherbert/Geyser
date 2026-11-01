@@ -32,7 +32,9 @@ import io.netty.util.NetUtil;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
+import org.cloudburstmc.netty.channel.nethernet.NetherNetConstants;
 import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
+import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetDiscoverySignaling;
 import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetHTTPServerSignaling;
 import org.cloudburstmc.netty.channel.nethernet.signaling.PongData;
 import org.cloudburstmc.netty.signaling.ProviderClient;
@@ -95,6 +97,10 @@ import java.util.stream.Stream;
  * The NetherNet (WebRTC) transport, used instead of RakNet: inbuilt HTTP signaling, NXS provider registration, or both,
  * all on the Bedrock address, and on the Bedrock port unless "webrtc-port" or -DgeyserSignalingPort move them.
  * Its state (signing identity, provider registration and DTLS identity) lives in the "nethernet" folder next to the config.
+ * <p>
+ * LAN discovery answers the broadcasts Bedrock 26.60+ sends to UDP {@value NetherNetConstants#DISCOVERY_PORT}, which is how
+ * the Friends tab lists servers on the same network now that RakNet's LAN ping is gone. {@code -DgeyserLanDiscovery=false}
+ * turns it off, and {@code -DgeyserLanIcePort} fixes the UDP port LAN joins play on, else it is ephemeral.
  */
 public final class NetherNetServer implements EventRegistrar {
     private static final long GUID = new Random().nextLong();
@@ -163,6 +169,11 @@ public final class NetherNetServer implements EventRegistrar {
     private EventLoopGroup inbuiltEventLoopGroup;
     private volatile Channel inbuiltChannel;
     private NetherNetChannelInitialiser inbuiltInitialiser;
+    /** Answers LAN discovery broadcasts and signals LAN joins; null while LAN discovery is not running. */
+    private volatile @Nullable NetherNetDiscoverySignaling lanDiscovery;
+    private EventLoopGroup lanEventLoopGroup;
+    private volatile Channel lanChannel;
+    private NetherNetChannelInitialiser lanInitialiser;
 
     public NetherNetServer(GeyserImpl geyser) {
         this.geyser = geyser;
@@ -241,6 +252,7 @@ public final class NetherNetServer implements EventRegistrar {
         warnIfBuiltinSettingsUnused(inbuilt);
         if (inbuilt) startInbuilt(advertised);
         if (provider) startProvider(advertised);
+        if (lanDiscoveryEnabled()) startLanDiscovery();
     }
 
     /** Settings only built-in signaling uses, the proxy address one also needing a proxy in one of its lists. */
@@ -326,21 +338,8 @@ public final class NetherNetServer implements EventRegistrar {
                     // setting already accepts the login chain it forwards
                     .setTokenTrust(geyser.config().advanced().bedrock().validateBedrockLogin()
                             ? TokenTrust.MINECRAFT_AUTH : TokenTrust.ANY)
-                    .setMotdProvider((host, remoteAddress, client) -> {
-                        // host is the HTTP Host header the client sent, which may be absent
-                        BedrockPong pong = pingResponder.onQuery(GUID, remoteAddress, host);
-
-                        return new PongData.Builder()
-                                .setServerName(pong.motd())
-                                .setLevelName(pong.subMotd())
-                                .setProtocol(pong.protocolVersion())
-                                .setVersion(pong.version())
-                                .setPlayerCount(pong.playerCount())
-                                .setMaxPlayerCount(pong.maximumPlayerCount())
-                                // As BDS sets it from online-mode, telling clients signed in to no Xbox account whether they may join
-                                .setSelfSignedAuth(!geyser.config().advanced().bedrock().validateBedrockLogin())
-                                .build();
-                    });
+                    // host is the HTTP Host header the client sent, which may be absent
+                    .setMotdProvider((host, remoteAddress, client) -> pongData(pingResponder.onQuery(GUID, remoteAddress, host)));
 
             GeyserConfig.SignalingConfig.BuiltinConfig.HttpsConfig https = builtin.https();
             if (!https.certificate().isBlank()) {
@@ -386,6 +385,110 @@ public final class NetherNetServer implements EventRegistrar {
             // Throwable: the WebRTC natives are not available on every platform
             closeInbuiltResources();
             logger().error("Built-in signaling could not start", e);
+        }
+    }
+
+    /** What signaling answers and discovery responses say about this server, as a RakNet pong does. */
+    private PongData pongData(BedrockPong pong) {
+        return new PongData.Builder()
+                .setServerName(pong.motd())
+                .setLevelName(pong.subMotd())
+                .setProtocol(pong.protocolVersion())
+                .setVersion(pong.version())
+                .setPlayerCount(pong.playerCount())
+                .setMaxPlayerCount(pong.maximumPlayerCount())
+                // As BDS sets it from online-mode, telling clients signed in to no Xbox account whether they may join
+                .setSelfSignedAuth(!geyser.config().advanced().bedrock().validateBedrockLogin())
+                .build();
+    }
+
+    /**
+     * Whether LAN discovery runs: {@code -DgeyserLanDiscovery}, true unless set to false. Only one process on a machine
+     * can hold UDP {@value NetherNetConstants#DISCOVERY_PORT}, so a second Geyser, a BDS or a Bedrock client on this
+     * machine needs it off here.
+     */
+    private static boolean lanDiscoveryEnabled() {
+        return Boolean.parseBoolean(System.getProperty("geyserLanDiscovery", "true"));
+    }
+
+    /**
+     * The UDP port LAN joins play on: {@code -DgeyserLanIcePort}, or 0 for an ephemeral port. A host firewall that
+     * only lets listed ports in needs a fixed one. It cannot be "webrtc-port", which built-in signaling holds.
+     */
+    private int lanIcePort() {
+        String property = System.getProperty("geyserLanIcePort");
+        if (property == null || property.isBlank()) {
+            return 0;
+        }
+        try {
+            int port = Integer.parseInt(property.trim());
+            if (port < 0 || port > 65535) {
+                throw new NumberFormatException();
+            }
+            if (port != 0 && port == webrtcPort) {
+                logger().warning("-DgeyserLanIcePort is ignored, as " + port + " is the \"webrtc-port\" built-in signaling uses. "
+                    + "LAN joins use an ephemeral port instead.");
+                return 0;
+            }
+            return port;
+        } catch (NumberFormatException e) {
+            logger().warning("Invalid -DgeyserLanIcePort \"" + property + "\", expected a port number. LAN joins use an ephemeral port instead.");
+            return 0;
+        }
+    }
+
+    /**
+     * Lists this server under Friends > LAN Games on this network: binds UDP {@value NetherNetConstants#DISCOVERY_PORT}
+     * on the Bedrock address, answers the discovery broadcasts Bedrock clients send there, and signals their joins over
+     * the same socket. The answers are signed with the identity built-in signaling uses, and joins are checked the same
+     * way. ICE goes on {@link #lanIcePort()}, as "webrtc-port" belongs to built-in signaling.
+     */
+    private void startLanDiscovery() {
+        GeyserConfig.BedrockConfig listener = geyser.config().bedrock();
+        OperatorIdentity identity;
+        try {
+            // The same identity file built-in signaling keeps, so a player who trusted this server once is not asked again
+            identity = OperatorIdentity.fromPemOrCreate(dataFolder.resolve("identity.pem").toFile(),
+                    GeyserImpl.NAME + "-" + geyser.config().gameplay().serverName());
+        } catch (Exception e) {
+            logger().error("LAN discovery will not start! Could not load or create this server's identity file, "
+                    + dataFolder.resolve("identity.pem") + ".", e);
+            return;
+        }
+
+        InetSocketAddress discoveryAddress = new InetSocketAddress(listener.address(), NetherNetConstants.DISCOVERY_PORT);
+        try {
+            NetherNetDiscoverySignaling discovery = new NetherNetDiscoverySignaling(GUID, discoveryAddress);
+            discovery.setServerIdentity(identity);
+            discovery.setTokenTrust(geyser.config().advanced().bedrock().validateBedrockLogin()
+                    ? TokenTrust.MINECRAFT_AUTH : TokenTrust.ANY);
+            // Nothing was typed to reach this server, so there is no host name to pass on
+            discovery.setMotdProvider((host, remoteAddress, client) -> pongData(pingResponder.onQuery(GUID, remoteAddress, null)));
+            this.lanDiscovery = discovery;
+
+            this.lanEventLoopGroup = TransportHelper.TRANSPORT_TYPE.eventLoopGroupFactory()
+                .apply(0, new DefaultThreadFactory("NetherNet LAN Discovery", true));
+            this.lanInitialiser = new NetherNetChannelInitialiser(geyser);
+
+            int icePort = lanIcePort();
+            ServerBootstrap b = new ServerBootstrap();
+            b.group(lanEventLoopGroup)
+                    .channelFactory(NetherNetChannelFactory.server(discovery))
+                    .childHandler(lanInitialiser);
+            if (icePort != 0) {
+                b.option(NetherChannelOption.NETHER_SERVER_ICE_ADDRESS, new InetSocketAddress(listener.address(), icePort));
+            }
+
+            this.lanChannel = b.bind(discoveryAddress).sync().channel();
+
+            logger().info("LAN discovery started on UDP port " + NetherNetConstants.DISCOVERY_PORT
+                + ": Bedrock players on this network see this server under Friends > LAN Games"
+                + (icePort != 0 ? ", and join it on UDP port " + icePort : ""));
+        } catch (Throwable e) {
+            // Throwable: the WebRTC natives are not available on every platform
+            closeLanResources();
+            logger().error("LAN discovery could not start on UDP port " + NetherNetConstants.DISCOVERY_PORT + ". Another Bedrock "
+                + "server or client on this machine may hold that port; -DgeyserLanDiscovery=false turns LAN discovery off.", e);
         }
     }
 
@@ -799,6 +902,7 @@ public final class NetherNetServer implements EventRegistrar {
             stopping = true;
             geyser.eventBus().unregisterAll(this);
             closeInbuiltResources();
+            closeLanResources();
             stopProvider();
         }
     }
@@ -838,6 +942,15 @@ public final class NetherNetServer implements EventRegistrar {
         if (signaling != null) signaling.close();
         if (inbuiltEventLoopGroup != null) inbuiltEventLoopGroup.shutdownGracefully();
         if (inbuiltInitialiser != null) inbuiltInitialiser.getEventLoopGroup().shutdownGracefully();
+    }
+
+    private void closeLanResources() {
+        if (lanChannel != null) lanChannel.close();
+        NetherNetDiscoverySignaling discovery = lanDiscovery;
+        if (discovery != null) discovery.close();
+        lanDiscovery = null;
+        if (lanEventLoopGroup != null) lanEventLoopGroup.shutdownGracefully();
+        if (lanInitialiser != null) lanInitialiser.getEventLoopGroup().shutdownGracefully();
     }
 
     private void closeNetworkResources() {
