@@ -32,7 +32,9 @@ import io.netty.util.NetUtil;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
+import org.cloudburstmc.netty.channel.nethernet.NetherNetConstants;
 import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
+import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetDiscoverySignaling;
 import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetHTTPServerSignaling;
 import org.cloudburstmc.netty.channel.nethernet.signaling.PongData;
 import org.cloudburstmc.netty.signaling.ProviderClient;
@@ -164,6 +166,15 @@ public final class NetherNetServer implements EventRegistrar {
     private volatile Channel inbuiltChannel;
     private NetherNetChannelInitialiser inbuiltInitialiser;
 
+    // NetherNet LAN discovery (UDP 7551), separate from HTTP/NXS signaling.
+    private volatile @Nullable NetherNetDiscoverySignaling discoverySignaling;
+    private EventLoopGroup discoveryEventLoopGroup;
+    private volatile @Nullable Channel discoveryChannel;
+    private NetherNetChannelInitialiser discoveryInitialiser;
+
+    // The identity is shared by built-in signaling and LAN discovery.
+    private volatile @Nullable OperatorIdentity operatorIdentity;
+
     public NetherNetServer(GeyserImpl geyser) {
         this.geyser = geyser;
         GeyserConfig.BedrockConfig bedrock = geyser.config().bedrock();
@@ -241,6 +252,12 @@ public final class NetherNetServer implements EventRegistrar {
         warnIfBuiltinSettingsUnused(inbuilt);
         if (inbuilt) startInbuilt(advertised);
         if (provider) startProvider(advertised);
+
+        // NetherNet LAN discovery is independent of the HTTP/NXS signaling provider.
+        // It is enabled by default; use -DgeyserLanDiscovery=false to disable it.
+        if (Boolean.parseBoolean(System.getProperty("geyserLanDiscovery", "true"))) {
+            startLanDiscovery();
+        }
     }
 
     /** Settings only built-in signaling uses, the proxy address one also needing a proxy in one of its lists. */
@@ -303,11 +320,11 @@ public final class NetherNetServer implements EventRegistrar {
             return;
         }
 
-        // Created on the first start and kept afterwards, as clients pin its public key
+        // Created on the first start and kept afterwards, as clients pin its public key.
+        // LAN discovery uses the same identity.
         OperatorIdentity identity;
         try {
-            identity = OperatorIdentity.fromPemOrCreate(dataFolder.resolve("identity.pem").toFile(),
-                    GeyserImpl.NAME + "-" + geyser.config().gameplay().serverName());
+            identity = operatorIdentity();
         } catch (Exception e) {
             logger().error("Built-in signaling will not start! Could not load or create this server's identity file, "
                     + dataFolder.resolve("identity.pem") + ". Only delete that file if it cannot be recovered: "
@@ -326,21 +343,7 @@ public final class NetherNetServer implements EventRegistrar {
                     // setting already accepts the login chain it forwards
                     .setTokenTrust(geyser.config().advanced().bedrock().validateBedrockLogin()
                             ? TokenTrust.MINECRAFT_AUTH : TokenTrust.ANY)
-                    .setMotdProvider((host, remoteAddress, client) -> {
-                        // host is the HTTP Host header the client sent, which may be absent
-                        BedrockPong pong = pingResponder.onQuery(GUID, remoteAddress, host);
-
-                        return new PongData.Builder()
-                                .setServerName(pong.motd())
-                                .setLevelName(pong.subMotd())
-                                .setProtocol(pong.protocolVersion())
-                                .setVersion(pong.version())
-                                .setPlayerCount(pong.playerCount())
-                                .setMaxPlayerCount(pong.maximumPlayerCount())
-                                // As BDS sets it from online-mode, telling clients signed in to no Xbox account whether they may join
-                                .setSelfSignedAuth(!geyser.config().advanced().bedrock().validateBedrockLogin())
-                                .build();
-                    });
+                    .setMotdProvider((host, remoteAddress, client) -> createPongData(remoteAddress, host));
 
             GeyserConfig.SignalingConfig.BuiltinConfig.HttpsConfig https = builtin.https();
             if (!https.certificate().isBlank()) {
@@ -386,6 +389,79 @@ public final class NetherNetServer implements EventRegistrar {
             // Throwable: the WebRTC natives are not available on every platform
             closeInbuiltResources();
             logger().error("Built-in signaling could not start", e);
+        }
+    }
+
+    /**
+     * Loads the persistent identity once so built-in signaling and LAN discovery advertise the same server identity.
+     */
+    private synchronized OperatorIdentity operatorIdentity() throws Exception {
+        if (operatorIdentity == null) {
+            operatorIdentity = OperatorIdentity.fromPemOrCreate(
+                dataFolder.resolve("identity.pem").toFile(),
+                GeyserImpl.NAME + "-" + geyser.config().gameplay().serverName()
+            );
+        }
+        return operatorIdentity;
+    }
+
+    /**
+     * Builds the Bedrock status shared by built-in HTTP signaling and LAN discovery.
+     * LAN discovery passes a null host because it has no HTTP Host header.
+     */
+    private PongData createPongData(InetSocketAddress remoteAddress, @Nullable String host) {
+        BedrockPong pong = pingResponder.onQuery(GUID, remoteAddress, host);
+        return new PongData.Builder()
+            .setServerName(pong.motd())
+            .setLevelName(pong.subMotd())
+            .setProtocol(pong.protocolVersion())
+            .setVersion(pong.version())
+            .setPlayerCount(pong.playerCount())
+            .setMaxPlayerCount(pong.maximumPlayerCount())
+            // As BDS sets it from online-mode, telling clients signed in to no Xbox account whether they may join.
+            .setSelfSignedAuth(!geyser.config().advanced().bedrock().validateBedrockLogin())
+            .build();
+    }
+
+    /**
+     * Starts NetherNet's LAN discovery responder. Bedrock 26.60 clients broadcast discovery requests on UDP 7551
+     * before they can show a server under Friends > LAN Games.
+     */
+    private void startLanDiscovery() {
+        GeyserConfig.BedrockConfig listener = geyser.config().bedrock();
+        NetherNetDiscoverySignaling discovery = new NetherNetDiscoverySignaling();
+
+        try {
+            this.discoverySignaling = discovery;
+            discovery.setServerIdentity(operatorIdentity());
+            discovery.setTokenTrust(geyser.config().advanced().bedrock().validateBedrockLogin()
+                ? TokenTrust.MINECRAFT_AUTH : TokenTrust.ANY);
+            discovery.setMotdProvider((host, remoteAddress, client) -> createPongData(remoteAddress, null));
+
+            // The discovery signaling object owns its UDP discovery socket. This event loop is for
+            // the NetherNet server channel and its child channels, matching the other server bootstraps.
+            this.discoveryEventLoopGroup = TransportHelper.TRANSPORT_TYPE.eventLoopGroupFactory()
+                .apply(0, new DefaultThreadFactory("NetherNet LAN Discovery", true));
+            this.discoveryInitialiser = new NetherNetChannelInitialiser(geyser);
+
+            ServerBootstrap bootstrap = new ServerBootstrap();
+            bootstrap.group(discoveryEventLoopGroup)
+                .channelFactory(NetherNetChannelFactory.server(discovery))
+                // LAN joins negotiate their own ICE ports. The configured WebRTC port belongs to normal signaling.
+                .option(NetherChannelOption.NETHER_SERVER_ICE_ADDRESS,
+                    new InetSocketAddress(listener.address(), 0))
+                .childHandler(discoveryInitialiser);
+
+            this.discoveryChannel = bootstrap
+                .bind(new InetSocketAddress(listener.address(), NetherNetConstants.DISCOVERY_PORT))
+                .sync()
+                .channel();
+
+            logger().info("NetherNet LAN discovery started on " + listener.address() + ":"
+                + NetherNetConstants.DISCOVERY_PORT);
+        } catch (Throwable e) {
+            closeDiscoveryResources();
+            logger().error("NetherNet LAN discovery could not start", e);
         }
     }
 
@@ -798,6 +874,7 @@ public final class NetherNetServer implements EventRegistrar {
             if (stopping) return;
             stopping = true;
             geyser.eventBus().unregisterAll(this);
+            closeDiscoveryResources();
             closeInbuiltResources();
             stopProvider();
         }
@@ -830,6 +907,33 @@ public final class NetherNetServer implements EventRegistrar {
             } else closeNetworkResources();
             providerClient = null;
             providerInstanceId = null;
+        }
+    }
+
+    private void closeDiscoveryResources() {
+        Channel channel = discoveryChannel;
+        discoveryChannel = null;
+        if (channel != null) {
+            channel.close(); // Also closes the discovery signaling object.
+        }
+
+        NetherNetDiscoverySignaling discovery = discoverySignaling;
+        discoverySignaling = null;
+        if (discovery != null) {
+            // Safe if the channel already closed it; also covers a failed/incomplete bind.
+            discovery.close();
+        }
+
+        EventLoopGroup group = discoveryEventLoopGroup;
+        discoveryEventLoopGroup = null;
+        if (group != null) {
+            group.shutdownGracefully();
+        }
+
+        NetherNetChannelInitialiser initialiser = discoveryInitialiser;
+        discoveryInitialiser = null;
+        if (initialiser != null) {
+            initialiser.getEventLoopGroup().shutdownGracefully();
         }
     }
 
